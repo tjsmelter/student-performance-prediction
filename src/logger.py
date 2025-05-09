@@ -18,11 +18,3 @@ logging.basicConfig(
     format="[ %(asctime)s ] %(lineno)d %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
-
-if __name__ == "__main__":
-    print("Logger script ran")
-    try:
-        logging.info("Logging has started")
-        print("Logging command executed")
-    except Exception as e:
-        print(f"Logging failed: {e}")
