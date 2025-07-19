@@ -2,6 +2,11 @@ import os
 import sys
 from dataclasses import dataclass
 
+import pandas as pd
+
+import shap
+import matplotlib.pyplot as plt
+
 from catboost import CatBoostRegressor
 from sklearn.ensemble import (
     AdaBoostRegressor,
@@ -21,6 +26,7 @@ from src.logger import logging
 from src.components.model_trainer_config import ModelTrainerConfig
 
 from src.utils import save_object,evaluate_models
+from src.utils import load_object
 
 @dataclass
 class ModelTrainerConfig:
@@ -109,9 +115,103 @@ class ModelTrainer:
                 obj=best_model
             )
 
-            predicted=best_model.predict(X_test)
+            # ✅ Predict test set
+            predicted = best_model.predict(X_test)
 
+            # ✅ Evaluate model performance
             r2_square = r2_score(y_test, predicted)
+
+            # Load preprocessor to get feature names
+            preprocessor_path = os.path.join("artifacts", "preprocessor.pkl")
+            preprocessor = load_object(preprocessor_path)
+
+            # Define your columns explicitly
+            numerical_columns = ["writing_score", "reading_score"]
+            categorical_columns = [
+                "gender",
+                "race_ethnicity",
+                "parental_level_of_education",
+                "lunch",
+                "test_preparation_course",
+            ]
+      
+            try:
+                sample_X = X_test[:100] if X_test.shape[0] > 100 else X_test
+
+                if best_model_name == "CatBoosting Regressor":
+                    # CatBoost needs original feature names, no one-hot encoding
+                    feature_names = numerical_columns + categorical_columns
+                    
+                    # Reconstruct DataFrame from X_test with original column names
+                    sample_X_df = pd.DataFrame(sample_X, columns=feature_names)
+                    
+                else:
+                    # For XGBRegressor and others using one-hot encoded features
+                    # Use preprocessor to get one-hot encoded feature names
+                    cat_pipeline = preprocessor.named_transformers_["cat_pipelines"]
+                    ohe = cat_pipeline.named_steps["one_hot_encoder"]
+                    cat_feature_names = ohe.get_feature_names_out(categorical_columns)
+                    feature_names = numerical_columns + list(cat_feature_names)
+                    
+                    # Reconstruct DataFrame with expanded feature names
+                    sample_X_df = pd.DataFrame(sample_X, columns=feature_names)
+                    
+                logging.info(f"sample_X_df.shape: {sample_X_df.shape}")
+                logging.info(f"sample_X_df.columns: {sample_X_df.columns.tolist()[:5]}")
+       
+
+            except Exception as e:
+                logging.warning(f"Could not reconstruct feature names: {e}")
+                feature_names = [f"Feature {i}" for i in range(X_train.shape[1])]
+                sample_X_df = pd.DataFrame(sample_X, columns=feature_names)
+
+            # Then SHAP explainability block
+            try:
+                logging.info("Generating SHAP explainability plot")
+                print(best_model_name)
+                if best_model_name in ["Linear Regression", "XGBRegressor", "CatBoosting Regressor", "Random Forest", "Gradient Boosting"]:
+                    
+                    logging.info(f"sample_X_df shape: {sample_X_df.shape}")
+                    logging.info(f"sample_X_df columns: {sample_X_df.columns.tolist()}")
+                    logging.info(f"sample_X_df head:\n{sample_X_df.head()}")    
+
+                    explainer = shap.Explainer(best_model, sample_X_df, feature_names=feature_names)
+                    shap_values = explainer(sample_X_df)
+
+                    # ✅ Add this to generate waterfall plot
+                    instance_index = 0
+                    shap_value_single = shap_values[instance_index]
+                    shap.plots.waterfall(shap_value_single, show=False)
+                    plt.title(f"SHAP Waterfall Plot - Row {instance_index} - {best_model_name}")
+                    plt.tight_layout()
+                    plt.savefig(f"artifacts/shap_waterfall_plot_row_{instance_index}.png")
+                    plt.close()
+                    logging.info(f"SHAP waterfall plot saved to artifacts/shap_waterfall_plot_row_{instance_index}.png")
+
+                    shap.summary_plot(shap_values, sample_X_df, show=False)
+                    plt.title(f"SHAP Summary Plot - {best_model_name}")
+                    plt.tight_layout()
+                    os.makedirs("artifacts", exist_ok=True)
+                    plt.savefig("artifacts/shap_summary_plot.png")
+                    plt.close()
+                    logging.info("SHAP summary plot saved to artifacts/shap_summary_plot.png")
+
+                    # Pick a single row to explain (e.g., the first one)
+                    instance_index = 0  # you can change this to another index
+                    shap_value_single = shap_values[instance_index]
+
+                    # Plot waterfall
+                    shap.plots.waterfall(shap_value_single, show=False)
+                    plt.title(f"SHAP Waterfall Plot - Row {instance_index} - {best_model_name}")
+                    plt.tight_layout()
+                    plt.savefig(f"artifacts/shap_waterfall_plot_row_{instance_index}.png")
+                    plt.close()
+                    logging.info(f"SHAP waterfall plot saved to artifacts/shap_waterfall_plot_row_{instance_index}.png")
+
+            except Exception as e:
+                logging.warning(f"SHAP explainability skipped: {e}")
+
+            # ✅ Return R² score
             return r2_square
             
 
